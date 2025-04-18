@@ -7,6 +7,104 @@ local UserInput = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 
+-- ========== GLOBAL STATE & INPUT RECORDING ==========
+getgenv().TAS_Recording = false
+getgenv().TAS_Playing = false
+getgenv().TAS_Paused = false
+
+local recordedInputs = {}
+local currentFrame = 1
+local playbackFrame = 1
+local recordingStartTime = 0
+local playbackStartTime = 0
+local lastUpdate = 0
+
+local function recordInput(inputType, keyCode, isPressed)
+    table.insert(recordedInputs, {
+        frame = currentFrame,
+        inputType = inputType,
+        keyCode = keyCode,
+        isPressed = isPressed
+    })
+end
+
+local function playInputsForFrame(frame)
+    for _, input in ipairs(recordedInputs) do
+        if input.frame == frame then
+            -- Simulate input if needed
+        end
+    end
+end
+
+-- ========== TICK FUNCTION ==========
+RunService.RenderStepped:Connect(function(deltaTime)
+    if getgenv().TAS_Recording then
+        currentFrame += 1
+    elseif getgenv().TAS_Playing and not getgenv().TAS_Paused then
+        playbackFrame += 1
+        playInputsForFrame(playbackFrame)
+    end
+end)
+
+-- ========== BIND KEYS ==========
+UserInput.InputBegan:Connect(function(input, processed)
+    if processed then return end
+    if input.KeyCode == settings.tas_key_record then
+        getgenv().TAS_Recording = not getgenv().TAS_Recording
+        getgenv().TAS_Playing = false
+        currentFrame = 1
+        recordedInputs = {}
+    elseif input.KeyCode == settings.tas_key_play then
+        getgenv().TAS_Playing = true
+        getgenv().TAS_Recording = false
+        playbackFrame = 1
+    elseif input.KeyCode == settings.tas_key_stop then
+        getgenv().TAS_Recording = false
+        getgenv().TAS_Playing = false
+    elseif input.KeyCode == settings.tas_key_pause then
+        getgenv().TAS_Paused = not getgenv().TAS_Paused
+    end
+
+    if getgenv().TAS_Recording then
+        recordInput("Keyboard", input.KeyCode.Name, true)
+    end
+end)
+
+UserInput.InputEnded:Connect(function(input, processed)
+    if getgenv().TAS_Recording then
+        recordInput("Keyboard", input.KeyCode.Name, false)
+    end
+end)
+
+-- ========== CAMERA & MOUSE TRACKING ==========
+local function recordCameraFrame()
+    local cf = Camera.CFrame
+    table.insert(recordedInputs, {
+        frame = currentFrame,
+        inputType = "Camera",
+        cframe = {cf:GetComponents()}
+    })
+end
+
+-- ========== EXPORT / IMPORT ==========
+local function exportTASData()
+    if writefile then
+        local encoded = HttpService:JSONEncode(recordedInputs)
+        writefile("TAS_Export.json", encoded)
+    end
+end
+
+local function importTASData()
+    if isfile and readfile and isfile("TAS_Export.json") then
+        local ok, dat = pcall(function()
+            return HttpService:JSONDecode(readfile("TAS_Export.json"))
+        end)
+        if ok and dat then
+            recordedInputs = dat
+        end
+    end
+end
+
 getgenv().TAS_CameraFollow = getgenv().TAS_CameraFollow or false
 getgenv().TAS_Slowmo = getgenv().TAS_Slowmo or false
 
@@ -135,111 +233,7 @@ local function switchTab(tabn)
     for name,btn in pairs(tabbtns) do
         btn.BackgroundColor3=(name==tabn) and Color3.fromRGB(200,200,200) or Color3.fromRGB(80,80,80)
         btn.TextColor3=(name==tabn) and Color3.fromRGB(40,40,40) or Color3.fromRGB(210,210,210)
-    end
-end
-for name,btn in pairs(tabbtns) do btn.MouseButton1Click:Connect(function()switchTab(name)end) end
-switchTab("TAS")
--- Dragging
-local dragging,draginput,dragstart,startpos,velocity,lastupdate=false,nil,nil,nil,Vector2.new(0,0),tick()
-header.InputBegan:Connect(function(input)
-    if input.UserInputType==Enum.UserInputType.MouseButton1 then
-        dragging=true;dragstart=input.Position;startpos=main.Position;velocity=Vector2.new(0,0);lastupdate=tick()
-        input.Changed:Connect(function()if input.UserInputState==Enum.UserInputState.End then dragging=false end end)
-    end
-end)
-header.InputChanged:Connect(function(input)if input.UserInputType==Enum.UserInputType.MouseMovement then draginput=input end end)
-UserInput.InputChanged:Connect(function(input)
-    if input==draginput and dragging then
-        local delta=input.Position-dragstart;local dt=math.max(tick()-lastupdate,0.01)
-        velocity=velocity:Lerp(Vector2.new(delta.X/dt,delta.Y/dt),0.2)
-        main.Position=startpos+UDim2.new(0,delta.X,0,delta.Y);lastupdate=tick()
-    end
-end)
-RunService.RenderStepped:Connect(function(dt)
-    if not dragging and(math.abs(velocity.X)>1 or math.abs(velocity.Y)>1)then
-        main.Position=main.Position+UDim2.new(0,velocity.X*dt,0,velocity.Y*dt);velocity=velocity*0.88
-    end
-end)
-
--- === Custom Grayscale Toggle ===
-local function grayscaleToggle(parent, label, getValue, setValue)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(0,180,0,36)
-    frame.BackgroundTransparency = 1
-    local btn = Instance.new("TextButton", frame)
-    btn.Size = UDim2.new(0,44,0,28)
-    btn.Position = UDim2.new(0,0,0,4)
-    btn.BackgroundColor3 = getValue() and Color3.fromRGB(200,200,200) or Color3.fromRGB(60,60,60)
-    btn.Text = ""
-    btn.AutoButtonColor = false
-    btn.BorderSizePixel = 0
-    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,14)
-    local icon = Instance.new("ImageLabel",btn)
-    icon.Name = "Icon"
-    icon.Size = UDim2.new(0,18,0,18)
-    icon.Position = UDim2.new(0.5,-9,0.5,-9)
-    icon.BackgroundTransparency = 1
-    icon.Image = "rbxassetid://6023426923" -- checkmark icon
-    icon.ImageColor3 = Color3.fromRGB(255,255,255)
-    icon.ImageTransparency = getValue() and 0 or 0.6
-    local txt = Instance.new("TextLabel",frame)
-    txt.Text = label
-    txt.Size = UDim2.new(1,-54,1,0)
-    txt.Position = UDim2.new(0,54,0,0)
-    txt.BackgroundTransparency = 1
-    txt.Font = Enum.Font.GothamBold
-    txt.TextColor3 = Color3.fromRGB(210,210,210)
-    txt.TextSize = 18
-    btn.MouseButton1Click:Connect(function()
-        setValue(not getValue())
-        animateToggle(btn, getValue())
-    end)
-    animateToggle(btn, getValue())
-    return frame
-end
-
-local function keybindPicker(parent,label,getValue,setValue)
-    local picking=false
-    local btn=Instance.new("TextButton")
-    btn.Text=label..": ["..getValue().Name.."]"
-    btn.Size=UDim2.new(0,140,0,32)
-    btn.Font=Enum.Font.GothamBold
-    btn.TextColor3=Color3.fromRGB(200,200,200)
-    btn.BackgroundColor3=Color3.fromRGB(70,70,70)
-    btn.BackgroundTransparency=0
-    btn.Parent=parent
-    btn.AutoButtonColor = false
-    btn.BorderSizePixel = 0
-    Instance.new("UICorner",btn).CornerRadius=UDim.new(0,10)
-    btn.MouseButton1Click:Connect(function()
-        btn.Text=label..": [Press any key]"
-        picking=true
-        local startTime = tick()
-        local conn
-        conn = UserInput.InputBegan:Connect(function(input)
-            if picking and input.UserInputType==Enum.UserInputType.Keyboard then
-                setValue(input.KeyCode)
-                btn.Text=label..": ["..input.KeyCode.Name.."]"
-                picking=false
-                saveSettings()
-                conn:Disconnect()
-            elseif picking and input.UserInputType~=Enum.UserInputType.Keyboard then
-                -- Cancel on any mouse click elsewhere
-                picking=false
-                btn.Text = label .. ": [" .. getValue().Name .. "]"
-                conn:Disconnect()
-            end
-        end)
-        spawn(function()
-            wait(5)
-            if picking then
-                picking=false
-                btn.Text = label .. ": [" .. getValue().Name .. "]"
-                if conn then conn:Disconnect() end
-            end
-        end)
-    end)
-    return btn
+      end
 end
 
 -- ========== TAS CORE ==========
@@ -624,5 +618,3 @@ RunService.RenderStepped:Connect(function()
         )
     end
 end)
-
-print("TAS Recorder/Player loaded! Use the UI to record/playback input. Camera Follow & Slow-Mo supported.")
