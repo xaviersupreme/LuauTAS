@@ -7,7 +7,6 @@ local UserInput = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Camera = workspace.CurrentCamera
 
--- ========== GLOBALS ==========
 getgenv().TAS_CameraFollow = getgenv().TAS_CameraFollow or false
 getgenv().TAS_Slowmo = getgenv().TAS_Slowmo or false
 
@@ -192,8 +191,6 @@ local function grayscaleToggle(parent, label, getValue, setValue)
     txt.Font = Enum.Font.GothamBold
     txt.TextColor3 = Color3.fromRGB(210,210,210)
     txt.TextSize = 18
-    -- Keybind picker leak fix: lose focus ends picking
-    local picking = false
     btn.MouseButton1Click:Connect(function()
         setValue(not getValue())
         animateToggle(btn, getValue())
@@ -218,17 +215,31 @@ local function keybindPicker(parent,label,getValue,setValue)
     btn.MouseButton1Click:Connect(function()
         btn.Text=label..": [Press any key]"
         picking=true
-        local conn; conn = UserInput.InputBegan:Connect(function(input)
+        local startTime = tick()
+        local conn
+        conn = UserInput.InputBegan:Connect(function(input)
             if picking and input.UserInputType==Enum.UserInputType.Keyboard then
                 setValue(input.KeyCode)
                 btn.Text=label..": ["..input.KeyCode.Name.."]"
                 picking=false
                 saveSettings()
                 conn:Disconnect()
+            elseif picking and input.UserInputType~=Enum.UserInputType.Keyboard then
+                -- Cancel on any mouse click elsewhere
+                picking=false
+                btn.Text = label .. ": [" .. getValue().Name .. "]"
+                conn:Disconnect()
             end
         end)
-        -- Cancel picking if focus lost
-        btn.FocusLost:Connect(function() picking = false; conn:Disconnect() end)
+        -- Timeout as additional safety
+        spawn(function()
+            wait(5)
+            if picking then
+                picking=false
+                btn.Text = label .. ": [" .. getValue().Name .. "]"
+                if conn then conn:Disconnect() end
+            end
+        end)
     end)
     return btn
 end
@@ -365,7 +376,7 @@ do
     exportBtn.TextColor3=Color3.fromRGB(220,220,220)
     Instance.new("UICorner",exportBtn).CornerRadius=UDim.new(0,8)
     exportBtn.MouseButton1Click:Connect(function()
-        setclipboard(HttpService:JSONEncode({events=tas.events}))
+        setclipboard(HttpService:JSONEncode({ events = tas.events, camera = tas.camera }))
     end)
     local importBtn = Instance.new("TextButton",tab)
     importBtn.Text = "Paste TAS"
@@ -377,9 +388,12 @@ do
     importBtn.TextColor3=Color3.fromRGB(220,220,220)
     Instance.new("UICorner",importBtn).CornerRadius=UDim.new(0,8)
     importBtn.MouseButton1Click:Connect(function()
-        local ok,dat = pcall(function() return HttpService:JSONDecode(tostring(game:GetService("GuiService"):GetClipboard())) end)
+        local ok,dat = pcall(function()
+            return HttpService:JSONDecode(getclipboard())
+        end)
         if ok and dat then
             tas.events = dat.events or dat
+            tas.camera = dat.camera or {}
             tas.len = #tas.events
             showError("TAS loaded.")
         end
@@ -388,7 +402,7 @@ do
     statusLabel = Instance.new("TextLabel",tab)
     statusLabel.Position = UDim2.new(0,8,0,y+36)
     statusLabel.Size = UDim2.new(0,360,0,28)
-    statusLabel.Text = "Frame: 0 | Status: Idle"
+    statusLabel.Text = "Frame: 1 / 0 | Idle"
     statusLabel.TextColor3 = Color3.fromRGB(220,220,220)
     statusLabel.BackgroundTransparency = 1
     statusLabel.Font = Enum.Font.GothamBold
@@ -426,6 +440,7 @@ do
                 local dat = settings.profiles[name]
                 if dat then
                     tas.events = deepCopy(dat.events or dat)
+                    tas.camera = deepCopy(dat.camera or {})
                     tas.len = #tas.events
                     settings.tas_profile = name
                     saveSettings()
@@ -455,7 +470,7 @@ do
     saveBtn.TextColor3=Color3.fromRGB(40,40,40)
     saveBtn.MouseButton1Click:Connect(function()
         if box.Text and #box.Text > 0 then
-            settings.profiles[box.Text]=deepCopy({events=tas.events})
+            settings.profiles[box.Text]=deepCopy({events=tas.events, camera=tas.camera})
             settings.tas_profile = box.Text
             saveSettings()
             updateList()
@@ -489,8 +504,6 @@ local function getKeyState()
     end
     return state
 end
-
-local prevKeyState = getKeyState()
 
 -- Handle keybinds and rew/ff/pause/step
 UserInput.InputBegan:Connect(function(input,gpe)
@@ -578,8 +591,14 @@ RunService.RenderStepped:Connect(function()
         while tas.frame <= #tas.events and tas.events[tas.frame].t <= now do
             local ev = tas.events[tas.frame]
             -- Example input replay (replace with VirtualInputManager if your executor supports it)
+            -- local vim = game:GetService("VirtualInputManager")
             -- for k,v in pairs(ev.keys) do
-            --     if v then ... (simulate UserInput:SendKeyEvent) ... end
+            --     local kc = Enum.KeyCode[k]
+            --     if kc and v then
+            --         vim:SendKeyEvent(true, kc, false, game)
+            --     elseif kc and not v then
+            --         vim:SendKeyEvent(false, kc, false, game)
+            --     end
             -- end
             -- Camera
             if getgenv().TAS_CameraFollow and ev.cframe then
