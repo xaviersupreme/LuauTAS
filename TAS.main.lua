@@ -34,7 +34,7 @@ local default_settings = {
     tas_key_play = Enum.KeyCode.P,
     tas_key_stop = Enum.KeyCode.T,
     tas_key_pause = Enum.KeyCode.F,
-    tas_key_frameadvance = Enum.KeyCode.Equals, -- = key (shift+equals)
+    tas_key_frameadvance = Enum.KeyCode.Equals,
     tas_key_rewind = Enum.KeyCode.Y,
     tas_key_fastforward = Enum.KeyCode.U,
     tas_profile = "default",
@@ -68,7 +68,6 @@ local function loadSettings()
             end
         end
     end
-    -- PATCH: Write loaded settings into globals
     getgenv().TAS_CameraFollow = settings.camera_follow
     getgenv().TAS_Slowmo = settings.slowmo
 end
@@ -231,7 +230,6 @@ local function keybindPicker(parent,label,getValue,setValue)
                 conn:Disconnect()
             end
         end)
-        -- Timeout as additional safety
         spawn(function()
             wait(5)
             if picking then
@@ -349,7 +347,6 @@ do
     end)
     y = y+44
 
-    -- Camera Follow Toggle
     local camToggle = grayscaleToggle(tab, "Camera Follow",
         function() return getgenv().TAS_CameraFollow end,
         function(v) getgenv().TAS_CameraFollow = v; settings.camera_follow = v; saveSettings() end
@@ -357,7 +354,6 @@ do
     camToggle.Position = UDim2.new(0,8,0,y)
     camToggle.ZIndex = 2
 
-    -- Slowmo Toggle
     local slowmoToggle = grayscaleToggle(tab, "Slow-Mo Recording",
         function() return getgenv().TAS_Slowmo end,
         function(v) getgenv().TAS_Slowmo = v; settings.slowmo = v; saveSettings() end
@@ -389,7 +385,7 @@ do
     Instance.new("UICorner",importBtn).CornerRadius=UDim.new(0,8)
     importBtn.MouseButton1Click:Connect(function()
         local ok,dat = pcall(function()
-            return HttpService:JSONDecode(getclipboard())
+            return HttpService:JSONDecode(tostring(getclipboard()))
         end)
         if ok and dat then
             tas.events = dat.events or dat
@@ -398,7 +394,6 @@ do
             showError("TAS loaded.")
         end
     end)
-    -- Status Label
     statusLabel = Instance.new("TextLabel",tab)
     statusLabel.Position = UDim2.new(0,8,0,y+36)
     statusLabel.Size = UDim2.new(0,360,0,28)
@@ -498,18 +493,16 @@ local slowJump = 25
 local function getKeyState()
     local state = {}
     for _,k in ipairs(Enum.KeyCode:GetEnumItems()) do
-        if k.Value > 0 then -- avoid Unknown
+        if k.Value > 0 then
             state[k.Name] = UserInput:IsKeyDown(k)
         end
     end
     return state
 end
 
--- Handle keybinds and rew/ff/pause/step
 UserInput.InputBegan:Connect(function(input,gpe)
     if gpe then return end
     if input.UserInputType ~= Enum.UserInputType.Keyboard then return end
-    -- Keybinds
     if input.KeyCode == settings.tas_key_record then
         if not tas.recording then
             resetTAS()
@@ -555,15 +548,12 @@ UserInput.InputBegan:Connect(function(input,gpe)
     end
 end)
 
--- Main loop: record per-frame, handle slowmo/camera, timestamped playback
 RunService.RenderStepped:Connect(function()
-    -- SLOWMO
     local char = LocalPlayer.Character
     local hum = char and char:FindFirstChildOfClass("Humanoid")
     if tas.recording and getgenv().TAS_Slowmo and hum then
-        if not tas.slowmo_was or not tas.slowmo_was.active then
-            tas.slowmo_was = {WalkSpeed = hum.WalkSpeed, JumpPower = hum.JumpPower, active = true}
-        end
+        -- Always update slowmo_was on start of recording
+        tas.slowmo_was = {WalkSpeed = hum.WalkSpeed, JumpPower = hum.JumpPower, active = true}
         hum.WalkSpeed = slowWalk
         hum.JumpPower = slowJump
     elseif (not tas.recording or not getgenv().TAS_Slowmo) and hum and tas.slowmo_was and tas.slowmo_was.active then
@@ -572,7 +562,7 @@ RunService.RenderStepped:Connect(function()
         tas.slowmo_was = nil
     end
 
-    -- RECORD per-frame snapshot (key state, mouse, camera), always 1:1
+    -- Always align camera array with events (nil if not captured)
     if tas.recording then
         local keyState = getKeyState()
         local mousePos = UserInput:GetMouseLocation()
@@ -582,25 +572,34 @@ RunService.RenderStepped:Connect(function()
             mouse = {x=mousePos.X, y=mousePos.Y},
             cframe = getgenv().TAS_CameraFollow and {Camera.CFrame:GetComponents()} or nil,
         })
+        table.insert(tas.camera, getgenv().TAS_CameraFollow and {Camera.CFrame:GetComponents()} or nil)
         tas.len = #tas.events
     end
 
-    -- PLAYBACK frame/timestamp-accurate
     if tas.playing and tas.frame <= #tas.events and not tas.paused then
         local now = tick() - (tas.playStartTime or tick())
         while tas.frame <= #tas.events and tas.events[tas.frame].t <= now do
             local ev = tas.events[tas.frame]
-            -- Example input replay (replace with VirtualInputManager if your executor supports it)
-            -- local vim = game:GetService("VirtualInputManager")
-            -- for k,v in pairs(ev.keys) do
-            --     local kc = Enum.KeyCode[k]
-            --     if kc and v then
-            --         vim:SendKeyEvent(true, kc, false, game)
-            --     elseif kc and not v then
-            --         vim:SendKeyEvent(false, kc, false, game)
-            --     end
-            -- end
-            -- Camera
+            -- Example: WASD input spoofing for movement only
+            local char = LocalPlayer.Character
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local move = Vector3.new(0,0,0)
+                if ev.keys.W then move = move + Camera.CFrame.LookVector end
+                if ev.keys.S then move = move - Camera.CFrame.LookVector end
+                if ev.keys.A then move = move - Camera.CFrame.RightVector end
+                if ev.keys.D then move = move + Camera.CFrame.RightVector end
+                hum:Move(move, true)
+            end
+             local vim = game:GetService("VirtualInputManager")
+             for k,v in pairs(ev.keys) do
+                 local kc = Enum.KeyCode[k]
+                 if kc and v then
+                     vim:SendKeyEvent(true, kc, false, game)
+                 elseif kc and not v then
+                     vim:SendKeyEvent(false, kc, false, game)
+                 end
+             end
             if getgenv().TAS_CameraFollow and ev.cframe then
                 Camera.CameraType = Enum.CameraType.Scriptable
                 Camera.CFrame = CFrame.new(unpack(ev.cframe))
@@ -617,7 +616,6 @@ RunService.RenderStepped:Connect(function()
         Camera.CameraType = Enum.CameraType.Custom
     end
 
-    -- Update status label
     if statusLabel then
         statusLabel.Text = string.format("Frame: %d / %d | %s",
             tas.frame, tas.len or 0,
